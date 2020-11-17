@@ -12,31 +12,33 @@ class simpleWhere:
         All column names in the WHERE clause are of the form i1 (two letters)
         The first letter is 'i' if integer, 'r' if real, 't' if text, 'd' if date
     """
-    # Let's put all the global variables here for conveniene
-    sqlStr = None
-    sqlTree = None  # The whole SQL tree
-    wTree = None  # The parsed WHERE clause
-    # List of tables and related schema
-    schema = {}
-    colTypes = {}
-    booleanTerms = ['and','or']
-    operators = ['eq']
 
     def __init__(self, sqlStr=None):
         if not sqlStr:
             print("ERROR: simpleWhere: Need to define an SQL string")
             return
+        self.schema = {}
+        self.colTypes = {}
+        self.conditions = []
+        self.booleanTerms = ['and','or']
+        self.operators = ['eq','neq','between','gt','lt','lte','gte']
         self.sqlStr = sqlStr
-        self.sqlTree = moz.parse(sqlStr)
+        self.sqlTree = moz.parse(sqlStr)    # The whole SQL tree
         if 'where' not in self.sqlTree:
             print("ERROR: simpleWhere: SQL must have WHERE clause")
             return
-        self.wTree = self.sqlTree['where']
+        self.wTree = self.sqlTree['where']   # The parsed WHERE clause
         self._makeTablesColumns()
 
-    def iterColTypes(self,table):
-        for col,colType in self.schema[table].items():
-            yield(col,colType)
+    def getColType(self,table,column):
+        return self.schema[table][column]['type']
+
+    def iterConditions(self,table):
+        return
+
+    def iterCols(self,table):
+        for col,_ in self.schema[table].items():
+            yield(col)
 
     def iterTabs(self):
         for tab in self.schema.keys():
@@ -44,18 +46,35 @@ class simpleWhere:
 
     def _getColTypeFromLeaf(self,leaf):
         ''' pulls the column and type from leaf node and puts in self.colTypes '''
-        colName = leaf[0]
+        operation = next(iter(leaf))
+        colName = leaf[operation][0]
         if colName in self.colTypes:
             return
+        self.colTypes[colName] = {'type':''}
         if colName[0] == 'i':
-            self.colTypes[colName] = 'integer'
+            self.colTypes[colName]['type'] = 'integer'
         elif colName[0] == 't':
-            self.colTypes[colName] = 'text'
+            self.colTypes[colName]['type'] = 'text'
         elif colName[0] == 'r':
-            self.colTypes[colName] = 'real'
+            self.colTypes[colName]['type'] = 'real'
         else:
             print(f"ERROR: getColTypeFromLeaf: {leaf}")
             quit()
+
+    def _getConditionFromLeaf(self,leaf):
+        ''' pulls the column and type from leaf node and puts in self.colTypes '''
+        operation = next(iter(leaf))
+        colName = leaf[operation][0]
+        operands = []
+        for operand in leaf[operation][1:]:
+            if type(operand) is dict and next(iter(operand)) == 'literal':
+                # This is a string constant
+                operands.append(operand['literal'])
+            else:
+                operands.append(operand)
+        self.conditions.append({'operation':operation,
+                                'colName':colName,
+                                'operands':operands})
 
     def _printLeaf(self,leaf):
         print(f"    {leaf}")
@@ -70,34 +89,39 @@ class simpleWhere:
             for subTree in tree[key]:
                 self._parseWhere(subTree,func)
         else:
-            func(tree[key])
+            func(tree)
 
     def _makeTablesColumns(self):
         ''' For now I'm assuming only one table (no JOIN) '''
         self.schema = {}
         self.colTypes = {}
         self._parseWhere(self.wTree, self._getColTypeFromLeaf)
+        self.conditions = []
+        self._parseWhere(self.wTree, self._getConditionFromLeaf)
         self.schema[self.sqlTree['from']] = self.colTypes
 
 if __name__ == "__main__":
     pp = pprint.PrettyPrinter(indent=4)
     sqls = [
-        "select count(*) from tab where r1 = 1 or (t1='y' and i1=1)",
         "select count(*) from tab where t1='y'",
         "select count(*) from tab where t1='y' and i1=1",
+        "select count(*) from tab where r1 <> 1 or (t1='y' and i1=1) or (i2 < 10 and r2 between 1.1 and 2.2)",
+        "select count(*) from tab where r1 <> 1 or (t1='y' and i1 > 1) or (i2 <= 10 and r2 >= 1.1)",
     ]
     for sql in sqls:
         print("--------")
-        x = simpleWhere(sql)
-        print(x.sqlStr)
+        sw = simpleWhere(sql)
+        print(sw.sqlStr)
         print("WHERE Tree:")
-        pp.pprint(x.wTree)
+        pp.pprint(sw.wTree)
         print("Parse of WHERE Tree:")
-        x._parseWhere(x.wTree,x._printLeaf)
+        sw._parseWhere(sw.wTree,sw._printLeaf)
         print("Schema:")
-        pp.pprint(x.schema)
-        print("Tables and column types:")
-        for table in x.iterTabs():
+        pp.pprint(sw.schema)
+        print("Conditions:")
+        pp.pprint(sw.conditions)
+        print("Tables and various values:")
+        for table in sw.iterTabs():
             print(f"    Table: {table}")
-            for (col,colType) in x.iterColTypes(table):
-                print(F"        Col: {col}, Type: {colType}")
+            for col in sw.iterCols(table):
+                print(F"        Col: {col}, Type: {sw.getColType(table,col)}")
