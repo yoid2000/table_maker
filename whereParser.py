@@ -30,11 +30,18 @@ class simpleWhere:
         self.wTree = self.sqlTree['where']   # The parsed WHERE clause
         self._makeTablesColumns()
 
-    def getColType(self,table,column):
-        return self.schema[table][column]['type']
-
     def iterConditions(self,table):
-        return
+        for condition in self.conditions:
+            yield condition
+
+    def getColName(self,condition):
+        return condition['colName']
+
+    def getOperation(self,condition):
+        return condition['operation']
+
+    def getOperands(self,condition):
+        return condition['operands']
 
     def iterCols(self,table):
         for col,_ in self.schema[table].items():
@@ -43,6 +50,9 @@ class simpleWhere:
     def iterTabs(self):
         for tab in self.schema.keys():
             yield tab
+
+    def getColType(self,table,column):
+        return self.schema[table][column]['type']
 
     def _getColTypeFromLeaf(self,leaf):
         ''' pulls the column and type from leaf node and puts in self.colTypes '''
@@ -116,12 +126,16 @@ if __name__ == "__main__":
         pp.pprint(sw.wTree)
         print("Parse of WHERE Tree:")
         sw._parseWhere(sw.wTree,sw._printLeaf)
-        print("Schema:")
+        print("Schema (native dict):")
         pp.pprint(sw.schema)
-        print("Conditions:")
+        print("Conditions (native dict):")
         pp.pprint(sw.conditions)
         print("Tables and various values:")
         for table in sw.iterTabs():
             print(f"    Table: {table}")
+            print(f"    Cols and Types:")
             for col in sw.iterCols(table):
                 print(F"        Col: {col}, Type: {sw.getColType(table,col)}")
+            print(f"    Conditions:")
+            for co in sw.iterConditions(table):
+                print(f"        column {sw.getColName(co)}, operation {sw.getOperation(co)}, operands {sw.getOperands(co)}")
