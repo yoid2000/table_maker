@@ -1,5 +1,4 @@
 import moz_sql_parser as moz
-import json
 
 sql = '''
 select count(*)

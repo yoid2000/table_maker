@@ -2,6 +2,8 @@ import sqlite3
 import pprint
 import os.path
 import itertools
+import random
+import string
 import pandas as pd
 import numpy as np
 import whereParser
@@ -12,8 +14,13 @@ class rowFiller:
     def __init__(self, sw,
             numAids=1,
             aidDist='distinctPerRow',
+            useTestDbName=True,
+            printIntermediateTables=True,
             numRowsPerCombination=10):
+        self.pp = pprint.PrettyPrinter(indent=4)
         self.sw = sw
+        self.printIntermediateTables = printIntermediateTables
+        self.useTestDbName = useTestDbName
         self.numAids = numAids
         self.aidDist = aidDist
         self.numRowsPerCombination = numRowsPerCombination
@@ -21,6 +28,7 @@ class rowFiller:
         self.dbName = self._makeDbName()
         self.dbPath = os.path.join('tables',self.dbName)
         self.failedCombinations = []
+        self.allColumns = []
         # This will be one list per table
         self.baseData = {}
         self.baseDf = {}
@@ -39,29 +47,61 @@ class rowFiller:
 
     def makeBaseTables(self):
         ''' This builds the basic table that has as many matching combinations
-            as possible.
+            as possible. It also makes the base dataframe from the baseData
         '''
         for table in self.sw.iterTabs():
             self.baseData[table] = []
             self.conditions = list(self.sw.iterConditions(table))
             self._processOneTable(table,self.baseData[table])
+            if self.printIntermediateTables:
+                self.pp.pprint(self.baseData[table])
+        for table,data in self.baseData.items():
+            self.allColumns = []
+            for i in range(self.numAids):
+                self.allColumns.append(f"aid{i+1}")
+            for column in list(self.sw.iterCols(table)):
+                self.allColumns.append(column)
+            self.baseDf[table] = pd.DataFrame(data, columns=self.allColumns) 
     
     def baseTablesToDb(self):
         ''' This takes the base table and writes it to an sql db '''
-        for table,data in self.baseData.items():
-            allColumns = []
-            for i in range(self.numAids):
-                allColumns.append(f"aid{i+1}")
-            for column in list(self.sw.iterCols(table)):
-                allColumns.append(column)
-            self.baseDf[table] = pd.DataFrame(data, columns=allColumns) 
         self.conn = sqlite3.connect(self.dbPath)
         for table,df in self.baseDf.items():
             df.to_sql(table,con=self.conn, if_exists='replace')
         self.conn.close()
 
-    def pruneBaseTables(self,table,query,numLeft=1):
-        ''' This prunes away the rows that match the dataframe query leaving numLeft
+    def appendDf(self,table,spec):
+        ''' This adds the rows defined by the spec to the base dataframe
+            Columns that are absent in the spec are assumed to require new distinct values
+        '''
+        dfSpec = {}
+        # First figure out how many rows we need
+        numRows = 1   # default assumption
+        for _,vals in spec.items():
+            numRows = max(numRows,len(vals))
+        for column in self.allColumns:
+            dfSpec[column] = []
+            for i in range(numRows):
+                if column not in spec or len(spec[column]) <= i or spec[column][i] == 'new':
+                    dfSpec[column].append(self._getNewVal(table,column))
+                else:
+                    dfSpec[column].append(spec[column][i])
+        df = pd.DataFrame(dfSpec)
+        self.baseDf[table] = self.baseDf[table].append(df)
+
+    def _getNewVal(self,table,column):
+        col = self.baseDf[table][column]
+        maxVal = col.max()
+        if type(maxVal) is str:
+            return ''.join(random.choice(string.ascii_lowercase) for _ in range(3))
+        elif np.issubdtype(maxVal,np.integer) or np.issubdtype(maxVal,np.float):
+            return maxVal + 1
+        else:
+            print(f"ERROR: _getNewVal: {table}, {column}, {maxVal}")
+            quit()
+
+    def stripAllButX(self,table,query,numLeft=1):
+        ''' This removes the rows that match the dataframe query leaving numLeft
             number of distinct AIDs
         '''
         bdf = self.baseDf[table]
@@ -85,7 +125,7 @@ class rowFiller:
         columns = list(self.sw.iterCols(table))
         # For now we have one distinct AID per row, numerically increasing
         # Later we'll have different AID distributions and multiple AIDs
-        aids = [1]
+        aids = [0]
         # Make all possible True/False column combinations
         for comb in itertools.product([True,False],repeat=len(self.conditions)):
             ''' For each combination, loop through each column and try to find a value
@@ -266,6 +306,8 @@ class rowFiller:
             return value-1
 
     def _makeDbName(self):
+        if self.useTestDbName:
+            return 'testAttack.db'
         dbName = ''
         for table in self.sw.iterTabs():
             if len(dbName) > self.maxDbName:
@@ -286,10 +328,9 @@ if __name__ == "__main__":
             'sql': "select count(*) from tab where t1='y' or i1=12345",
             'attack1': "select count(*) from tab where t1='y' or i1=12345",
             'attack2': "select count(*) from tab where t1='y'",
-            # I want to make a scenario where the victim does not have t1=y. So I prune all
+            # I want to make a scenario where the victim does not have t1=y. So I remove all
             # but one of the users that has i1=12345 but not t1=y
-            'prune': {'table':'tab','query': "t1 != 'y' and i1 == 12345"},
-            'ansPrune': 10
+            'strip': {'table':'tab','query': "t1 != 'y' and i1 == 12345"},
         },
     ]
     for test in tests:
@@ -303,8 +344,8 @@ if __name__ == "__main__":
         print("Original base dataframe:")
         pp.pprint(rf.baseDf)
         print(rf.dbPath)
-        rf.pruneBaseTables(test['prune']['table'],test['prune']['query'])
-        print("Pruned base dataframe:")
+        rf.stripAllButX(test['strip']['table'],test['strip']['query'])
+        print("Stripped base dataframe:")
         pp.pprint(rf.baseDf)
         print(f"{test['attack1']}:")
         pp.pprint(rf.queryDb(test['attack1']))
