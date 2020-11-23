@@ -29,6 +29,7 @@ class rowFiller:
         self.dbPath = os.path.join('tables',self.dbName)
         self.failedCombinations = []
         self.allColumns = []
+        self.newRows = []
         # This will be one list per table
         self.baseData = {}
         self.baseDf = {}
@@ -82,12 +83,38 @@ class rowFiller:
         for column in self.allColumns:
             dfSpec[column] = []
             for i in range(numRows):
-                if column not in spec or len(spec[column]) <= i or spec[column][i] == 'new':
+                if column not in spec or len(spec[column]) <= i or spec[column][i] == 'unique':
                     dfSpec[column].append(self._getNewVal(table,column))
                 else:
                     dfSpec[column].append(spec[column][i])
         df = pd.DataFrame(dfSpec)
+        self._addToNewRows(dfSpec)
         self.baseDf[table] = self.baseDf[table].append(df)
+
+    def stripDf(self,table,query):
+        ''' This removes the rows that match the dataframe query
+        '''
+        bdf = self.baseDf[table]
+        notQuery = f"not({query})"
+        dfKeep = bdf.query(notQuery)
+        # dfKeep contains everything except what matches the query
+        self.baseDf[table] = dfKeep
+    
+    def iterNewRows(self):
+        for newRow in self.newRows:
+            yield newRow
+
+    def getNewRowColumn(self,col):
+        return(self.newRows[0][col])
+
+    def _addToNewRows(self,spec):
+        someCol = next(iter(spec))
+        numRows = len(spec[someCol])
+        for i in range(numRows):
+            newRow = {}
+            for col,val in spec.items():
+                newRow[col] = val[i]
+            self.newRows.append(newRow)
 
     def _getNewVal(self,table,column):
         col = self.baseDf[table][column]
