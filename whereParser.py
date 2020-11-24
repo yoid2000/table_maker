@@ -117,6 +117,7 @@ if __name__ == "__main__":
         "select count(*) from tab where t1='y' and i1=1",
         "select count(*) from tab where r1 <> 1 or (t1='y' and i1=1) or (i2 < 10 and r2 between 1.1 and 2.2)",
         "select count(*) from tab where r1 <> 1 or (t1='y' and i1 > 1) or (i2 <= 10 and r2 >= 1.1)",
+        "select count(*) from tab where t1 in ('a','b','c','d')",
     ]
     for sql in sqls:
         print("--------")

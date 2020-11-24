@@ -16,8 +16,10 @@ class rowFiller:
             aidDist='distinctPerRow',
             useTestDbName=True,
             printIntermediateTables=True,
-            numRowsPerCombination=10):
+            numRowsPerCombination=10,
+            dop=False):
         self.pp = pprint.PrettyPrinter(indent=4)
+        self.dop = dop
         self.sw = sw
         self.printIntermediateTables = printIntermediateTables
         self.useTestDbName = useTestDbName
@@ -53,6 +55,9 @@ class rowFiller:
         for table in self.sw.iterTabs():
             self.baseData[table] = []
             self.conditions = list(self.sw.iterConditions(table))
+            if self.dop:
+                print(f"Conditions (table {table}):")
+                self.pp.pprint(self.conditions)
             self._processOneTable(table,self.baseData[table])
             if self.printIntermediateTables:
                 self.pp.pprint(self.baseData[table])
@@ -163,6 +168,9 @@ class rowFiller:
                 conditions, then we presume that the conditions can't be satisfied and
                 we move on. (This may fail to find working values when such values exist.)
             '''
+            # We can make multiple rows from this combination if one of the conditions is IN()
+            # and the result if True. In which case we want one row per IN() element
+            rows = []
             values = []
             # We are going to find all of the candidate values for all columns in advance,
             # and then resolve them, because some conditions can involve multiple columns
@@ -172,6 +180,8 @@ class rowFiller:
             for column in columns:
                 candidateValues[column] = []
                 relevantConditions[column],relevantResults[column] = self._getRelevantConditions(column,comb)
+                if self.dop:
+                    print(f"column {column}, relevantConditions {relevantConditions}, relevantResults {relevantResults}")
                 for i in range(len(relevantConditions[column])):
                     condition = relevantConditions[column][i]
                     result = relevantResults[column][i]
@@ -181,15 +191,15 @@ class rowFiller:
             # conditions
             allValuesWork = True
             for column in columns:
-                workingValue = self._findWorkingValue(candidateValues,column,
+                workingValueList = self._findWorkingValue(candidateValues,column,
                                                       relevantConditions, relevantResults)
-                if workingValue is None:
+                if len(workingValueList) == 0:
                     # can't find values for this combination
                     self._addFailedCombination(columns,column,comb,
                                                relevantConditions[column],candidateValues[column])
                     allValuesWork = False
                 else:
-                    values.append(workingValue)
+                    values.append(workingValueList)
             if allValuesWork is False:
                 continue
             # `values` contains the list of working values in the order that the columns
@@ -219,26 +229,30 @@ class rowFiller:
         return relevantConditions,relevantResults
 
     def _findWorkingValue(self,candidateValues,column,relevantConditions,relevantResults):
-        for value in candidateValues[column]:
-            passed = True
-            for i in range(len(relevantConditions[column])):
-                if self._valuePasses(value,relevantConditions[column][i],
-                                     relevantResults[column][i]) is False:
-                    passed = False
-                    break
-            if passed is True:
-                # Found working value
-                return value
-            else:
-                continue    # try next value
-        return None
+        values = []
+        for valueList in candidateValues[column]:
+            for value in valueList:
+                if self.dop: print(f"findWorkingValue: column {column}, value {value}")
+                passed = True
+                for i in range(len(relevantConditions[column])):
+                    if self._valuePasses(value,relevantConditions[column][i],
+                                         relevantResults[column][i]) is False:
+                        passed = False
+                        break
+                if passed is True:
+                    # Found working value
+                    values.append(value)
+                else:
+                    continue    # try next value
+        return values
 
     def _makeRow(self,data,aids,values):
         row = []
         for aid in aids:
             row.append(aid)
-        for value in values:
-            row.append(value)
+        for valueList in values:
+            row.append(valueList[0])
+            pass
         data.append(row)
 
     def _addCandidateValues(self,candidateValues,condition,result):
@@ -247,9 +261,9 @@ class rowFiller:
         if ((operation == 'eq' and result is True) or
             (operation == 'neq' and result is False) or
             (operation == 'between' and result is True)):
-            candidateValues.append(operands[0])
+            candidateValues.append([operands[0]])
             if operation == 'between':
-                candidateValues.append(operands[1])
+                candidateValues.append([operands[1]])
         elif ((operation == 'eq' and result is False) or
             (operation == 'neq' and result is True) or
             ((operation == 'gt' or operation == 'gte') and result is True) or
@@ -268,47 +282,43 @@ class rowFiller:
     def _valuePasses(self,value,condition,result):
         operation = self.sw.getOperation(condition)
         operands = self.sw.getOperands(condition)
+        retVal = False
+        if self.dop: print(f"    valuePasses, value {value} operation {operation}, operands {operands}, result {result}")
         if ((operation == 'eq' and result is True) or
             (operation == 'neq' and result is False)):
-            if value == operands[0]: return True
-            else: return False
+            if value == operands[0]: retVal = True
         elif ((operation == 'eq' and result is False) or
             (operation == 'neq' and result is True)):
-            if value != operands[0]: return True
-            else: return False
+            if value != operands[0]: retVal = True
         elif ((operation == 'gt' and result is True) or
             (operation == 'lte' and result is False)):
-            if value > operands[0]: return True
-            else: return False
+            if value > operands[0]: retVal = True
         elif ((operation == 'gt' and result is False) or
             (operation == 'lte' and result is True)):
-            if value <= operands[0]: return True
-            else: return False
+            if value <= operands[0]: retVal = True
         elif ((operation == 'lt' and result is True) or
             (operation == 'gte' and result is False)):
-            if value < operands[0]: return True
-            else: return False
+            if value < operands[0]: retVal = True
         elif ((operation == 'lt' and result is False) or
             (operation == 'gte' and result is True)):
-            if value >= operands[0]: return True
-            else: return False
+            if value >= operands[0]: retVal = True
         elif (operation == 'between' and result is True):
-            if value >= operands[0] and value <= operands[1]: return True
-            else: return False
+            if value >= operands[0] and value <= operands[1]: retVal = True
         elif (operation == 'between' and result is False):
-            if value < operands[0] or value > operands[1]: return True
-            else: return False
+            if value < operands[0] or value > operands[1]: retVal = True
         else:
             print(f"Error: valuePasses: no matching branch {condition}, {result}")
             quit()
+        if self.dop: print(f"        return value is {retVal}")
+        return retVal
 
     def _addBiggerValues(self,value,valList):
         if type(value) is str:
             # Not guaranteed to be bigger, but good chance
-            valList.append('zz')
+            valList.append(['zz'])
         else:
-            valList.append(value+1)
-            valList.append(value+2)
+            valList.append([value+1])
+            valList.append([value+2])
 
     def _makeBiggerValue(self,value):
         if type(value) is str:
@@ -320,10 +330,10 @@ class rowFiller:
     def _addSmallerValues(self,value,valList):
         if type(value) is str:
             # Not guaranteed to be bigger, but good chance
-            valList.append('AA')
+            valList.append(['AA'])
         else:
-            valList.append(value-1)
-            valList.append(value-2)
+            valList.append([value-1])
+            valList.append([value-2])
 
     def _makeSmallerValue(self,value):
         if type(value) is str:
