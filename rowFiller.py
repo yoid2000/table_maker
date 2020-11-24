@@ -22,7 +22,7 @@ class aidManager:
 
 
 class rowFiller:
-    """Generates the rows as sqlite commands
+    """Generates the rows and outputs the table as sqlite
     """
     def __init__(self, sw,
             aidSpec=['distinctPerRow'],
@@ -181,8 +181,6 @@ class rowFiller:
                 conditions, then we presume that the conditions can't be satisfied and
                 we move on. (This may fail to find working values when such values exist.)
             '''
-            # We can make multiple rows from this combination if one of the conditions is IN()
-            # and the result if True. In which case we want one row per IN() element
             values = []
             # We are going to find all of the candidate values for all columns in advance,
             # and then resolve them, because some conditions can involve multiple columns
@@ -290,6 +288,10 @@ class rowFiller:
         elif (operation == 'between' and result is False):
             self._addSmallerValues(operands[0],candidateValues)
             self._addBiggerValues(operands[1],candidateValues)
+        elif (operation == 'in' and result is True):
+            candidateValues.append(operands[0])
+        elif (operation == 'in' and result is False):
+            self._addBiggerValues(max(operands[0]),candidateValues)
         else:
             print(f"Error: addCandidateValues: no matching branch {condition}, {result}")
             quit()
@@ -297,6 +299,7 @@ class rowFiller:
     def _valuePasses(self,value,condition,result):
         operation = self.sw.getOperation(condition)
         operands = self.sw.getOperands(condition)
+        pass
         retVal = False
         if self.dop: print(f"    valuePasses, value {value} operation {operation}, operands {operands}, result {result}")
         if ((operation == 'eq' and result is True) or
@@ -321,6 +324,10 @@ class rowFiller:
             if value >= operands[0] and value <= operands[1]: retVal = True
         elif (operation == 'between' and result is False):
             if value < operands[0] or value > operands[1]: retVal = True
+        elif (operation == 'in' and result is True):
+            if value in operands[0]: retVal = True
+        elif (operation == 'in' and result is False):
+            if value not in operands[0]: retVal = True
         else:
             print(f"Error: valuePasses: no matching branch {condition}, {result}")
             quit()
