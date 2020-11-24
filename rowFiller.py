@@ -8,12 +8,24 @@ import pandas as pd
 import numpy as np
 import whereParser
 
+class aidManager:
+    """ Assigns the next aid value """
+    def __init__(self,alg='distinctPerRow'):
+        self.alg = alg
+        if self.alg == 'distinctPerRow':
+            self.nextVal = -1
+
+    def nextAid(self):
+        if self.alg == 'distinctPerRow':
+            self.nextVal += 1
+            return self.nextVal
+
+
 class rowFiller:
     """Generates the rows as sqlite commands
     """
     def __init__(self, sw,
-            numAids=1,
-            aidDist='distinctPerRow',
+            aidSpec=['distinctPerRow'],
             useTestDbName=True,
             printIntermediateTables=True,
             numRowsPerCombination=10,
@@ -23,8 +35,12 @@ class rowFiller:
         self.sw = sw
         self.printIntermediateTables = printIntermediateTables
         self.useTestDbName = useTestDbName
-        self.numAids = numAids
-        self.aidDist = aidDist
+        self.aidSpec = aidSpec
+        self.aidManagers = []
+        self.aidDummies = []
+        for i in range(len(self.aidSpec)):
+            self.aidManagers.append(aidManager(self.aidSpec[i]))
+            self.aidDummies.append('x')
         self.numRowsPerCombination = numRowsPerCombination
         self.maxDbName = 50
         self.dbName = self._makeDbName()
@@ -63,7 +79,7 @@ class rowFiller:
                 self.pp.pprint(self.baseData[table])
         for table,data in self.baseData.items():
             self.allColumns = []
-            for i in range(self.numAids):
+            for i in range(len(self.aidSpec)):
                 self.allColumns.append(f"aid{i+1}")
             for column in list(self.sw.iterCols(table)):
                 self.allColumns.append(column)
@@ -155,9 +171,6 @@ class rowFiller:
     
     def _processOneTable(self,table,data):
         columns = list(self.sw.iterCols(table))
-        # For now we have one distinct AID per row, numerically increasing
-        # Later we'll have different AID distributions and multiple AIDs
-        aids = [0]
         # Make all possible True/False column combinations
         for comb in itertools.product([True,False],repeat=len(self.conditions)):
             ''' For each combination, loop through each column and try to find a value
@@ -170,7 +183,6 @@ class rowFiller:
             '''
             # We can make multiple rows from this combination if one of the conditions is IN()
             # and the result if True. In which case we want one row per IN() element
-            rows = []
             values = []
             # We are going to find all of the candidate values for all columns in advance,
             # and then resolve them, because some conditions can involve multiple columns
@@ -205,8 +217,7 @@ class rowFiller:
             # `values` contains the list of working values in the order that the columns
             # appear in the sqlite table
             for _ in range(self.numRowsPerCombination):
-                self._makeRow(data,aids,values)
-                aids[0] += 1
+                self._makeRows(data,values)
 
     def _addFailedCombination(self,columns,column,comb,conditions,values):
         self.failedCombinations.append({'columns':columns,
@@ -246,14 +257,18 @@ class rowFiller:
                     continue    # try next value
         return values
 
-    def _makeRow(self,data,aids,values):
-        row = []
-        for aid in aids:
-            row.append(aid)
-        for valueList in values:
-            row.append(valueList[0])
-            pass
-        data.append(row)
+    def _makeRows(self,data,values):
+        ''' Because of IN(), coming in here one or more of the items in `values`
+            can be a list of more than one value. In that case, we want to make
+            a row for all possible combinations of those values.
+        '''
+        rows = []
+        for row in itertools.product(*self.aidDummies,*values):
+            rows.append(list(row))
+        for row in rows:
+            for i in range(len(self.aidDummies)):
+                row[i] = self.aidManagers[i].nextAid()
+            data.append(row)
 
     def _addCandidateValues(self,candidateValues,condition,result):
         operation = self.sw.getOperation(condition)
