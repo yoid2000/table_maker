@@ -38,6 +38,8 @@ class rowFiller:
         self.aidSpec = aidSpec
         self.aidManagers = []
         self.aidDummies = []
+        self.aidCols = []
+        self._makeAidColumns()
         for i in range(len(self.aidSpec)):
             self.aidManagers.append(aidManager(self.aidSpec[i]))
             self.aidDummies.append('x')
@@ -52,6 +54,12 @@ class rowFiller:
         self.baseData = {}
         self.baseDf = {}
 
+    def getDbName(self):
+        return self.dbName
+
+    def getDbPath(self):
+        return self.dbPath
+
     def queryDb(self,sql):
         self.conn = sqlite3.connect(self.dbPath)
         self.cur = self.conn.cursor()
@@ -63,6 +71,14 @@ class rowFiller:
     def queryDf(self,table,query):
         df = self.baseDf[table].query(query)
         return df
+
+    def _makeAidColumns(self):
+        self.aidCols = []
+        for i in range(len(self.aidSpec)):
+            self.aidCols.append(f"aid{i+1}")
+
+    def getAidColumns(self):
+        return self.aidCols
 
     def makeBaseTables(self):
         ''' This builds the basic table that has as many matching combinations
@@ -79,8 +95,8 @@ class rowFiller:
                 self.pp.pprint(self.baseData[table])
         for table,data in self.baseData.items():
             self.allColumns = []
-            for i in range(len(self.aidSpec)):
-                self.allColumns.append(f"aid{i+1}")
+            for aidCol in self.aidCols:
+                self.allColumns.append(aidCol)
             for column in list(self.sw.iterCols(table)):
                 self.allColumns.append(column)
             self.baseDf[table] = pd.DataFrame(data, columns=self.allColumns) 
